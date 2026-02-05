@@ -168,4 +168,4 @@ def ask():
     return jsonify({"answer": message.content[0].text})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', por
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))

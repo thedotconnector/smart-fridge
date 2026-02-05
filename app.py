@@ -80,6 +80,7 @@ HTML = '''
             cursor: pointer;
         }
         button:active { background: #0051D5; }
+        button:disabled { background: #ccc; }
         .loading { opacity: 0.6; }
     </style>
 </head>
@@ -100,7 +101,7 @@ HTML = '''
             
             if (!question) return;
             
-            chat.innerHTML += \`<div class="message user">\${question}</div>\`;
+            chat.innerHTML += '<div class="message user">' + question + '</div>';
             input.value = '';
             chat.scrollTop = chat.scrollHeight;
             
@@ -111,13 +112,13 @@ HTML = '''
                 const response = await fetch('/ask', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({question})
+                    body: JSON.stringify({question: question})
                 });
                 const data = await response.json();
                 
-                chat.innerHTML += \`<div class="message assistant">\${data.answer}</div>\`;
+                chat.innerHTML += '<div class="message assistant">' + data.answer + '</div>';
             } catch (error) {
-                chat.innerHTML += \`<div class="message assistant">Error: \${error.message}</div>\`;
+                chat.innerHTML += '<div class="message assistant">Error: ' + error.message + '</div>';
             }
             
             btn.disabled = false;
@@ -125,7 +126,7 @@ HTML = '''
             chat.scrollTop = chat.scrollHeight;
         }
         
-        document.getElementById('input').addEventListener('keypress', (e) => {
+        document.getElementById('input').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') send();
         });
     </script>

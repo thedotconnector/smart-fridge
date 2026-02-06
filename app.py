@@ -298,14 +298,21 @@ HTML = '''
         }
         
         async function loadGreeting() {
+            const chat = document.getElementById('chat');
+            chat.innerHTML = '<div class="typing-indicator">Thinking<span></span><span></span><span></span></div>';
+            
             try {
                 const response = await fetch('/greeting');
                 const data = await response.json();
                 
-                const chat = document.getElementById('chat');
+                const typingIndicators = document.querySelectorAll('.typing-indicator');
+                typingIndicators.forEach(el => el.remove());
+                
                 chat.innerHTML = '<div class="message fridge-greeting">' + data.greeting + '</div>';
             } catch (error) {
                 console.error('Error loading greeting:', error);
+                const typingIndicators = document.querySelectorAll('.typing-indicator');
+                typingIndicators.forEach(el => el.remove());
             }
         }
         

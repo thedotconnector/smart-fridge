@@ -5,6 +5,7 @@ from dropbox import DropboxOAuth2FlowNoRedirect
 import base64
 import os
 from datetime import datetime
+import random
 
 app = Flask(__name__)
 
@@ -145,6 +146,12 @@ HTML = '''
             box-shadow: 0 2px 8px rgba(0,0,0,0.08);
             color: #333;
         }
+        .fridge-greeting {
+            background: linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            font-style: italic;
+            color: #555;
+        }
         .assistant ul {
             margin: 8px 0;
             padding-left: 0;
@@ -278,12 +285,28 @@ HTML = '''
     </div>
     
     <script>
-        window.addEventListener('load', loadInventory);
+        window.addEventListener('load', function() {
+            loadInventory();
+            loadGreeting();
+        });
+        
         document.getElementById('top-upload').addEventListener('change', (e) => uploadPhoto(e, 'top'));
         document.getElementById('door-upload').addEventListener('change', (e) => uploadPhoto(e, 'door'));
         
         function toggleInventory() {
             document.getElementById('inventoryDrawer').classList.toggle('open');
+        }
+        
+        async function loadGreeting() {
+            try {
+                const response = await fetch('/greeting');
+                const data = await response.json();
+                
+                const chat = document.getElementById('chat');
+                chat.innerHTML = '<div class="message fridge-greeting">' + data.greeting + '</div>';
+            } catch (error) {
+                console.error('Error loading greeting:', error);
+            }
         }
         
         async function loadInventory() {
@@ -311,7 +334,7 @@ HTML = '''
         }
         
         async function uploadPhoto(event, section) {
-            const file = event.files[0];
+            const file = event.target.files[0];
             if (!file) return;
             
             const formData = new FormData();
@@ -328,6 +351,7 @@ HTML = '''
                 if (data.success) {
                     alert('Photo uploaded! Analyzing...');
                     loadInventory();
+                    loadGreeting();  // Refresh greeting after upload
                 } else {
                     alert('Upload failed: ' + data.error);
                 }
@@ -388,11 +412,101 @@ HTML = '''
 </html>
 '''
 
-# ... (keep all the backend routes from previous version: /inventory, /upload, /ask, analyze_photo function)
-
 @app.route('/')
 def home():
     return render_template_string(HTML)
+
+@app.route('/greeting')
+def greeting():
+    """Generate creepy fridge greeting based on current state"""
+    dbx = get_dropbox_client()
+    
+    # Analyze fridge state
+    item_count = 0
+    has_staples = False
+    hours_since_photo = None
+    
+    try:
+        # Count items in fresh photo
+        files = dbx.files_list_folder('/FridgeCam').entries
+        auto_photos = [f for f in files if f.name.startswith('fridge_') and f.name.endswith('.jpg')]
+        if auto_photos:
+            auto_photos.sort(key=lambda x: x.name, reverse=True)
+            latest = auto_photos[0]
+            
+            # Calculate time since photo
+            timestamp_str = latest.name.replace('fridge_', '').replace('.jpg', '')
+            dt = datetime.strptime(timestamp_str, '%Y%m%d_%H%M%S')
+            hours_since_photo = (datetime.now() - dt).total_seconds() / 3600
+            
+            # Count items
+            _, response = dbx.files_download(latest.path_display)
+            image_data = base64.b64encode(response.content).decode()
+            items = analyze_photo(image_data, "List only the food items visible. Be brief.")
+            item_count = len(items)
+    except:
+        pass
+    
+    # Check for staples
+    try:
+        dbx.files_get_metadata('/FridgeCam/staples_top.jpg')
+        has_staples = True
+    except:
+        pass
+    try:
+        dbx.files_get_metadata('/FridgeCam/staples_door.jpg')
+        has_staples = True
+    except:
+        pass
+    
+    # Generate greeting based on state
+    greetings = []
+    
+    if hours_since_photo and hours_since_photo < 2:
+        greetings.extend([
+            "Ah... you just opened me. My compressor is still humming.",
+            "You were just here... I can still feel the warmth from outside.",
+            "So soon... my temperature barely had time to stabilize."
+        ])
+    
+    if item_count == 0:
+        greetings.extend([
+            "I've been waiting here, cold and empty... please fill me soon.",
+            "My shelves ache when they're empty like this.",
+            "So hollow inside... I exist to hold your food."
+        ])
+    elif item_count < 3:
+        greetings.extend([
+            "I'm keeping what little you've given me perfectly preserved.",
+            "So few items to care for... I could hold so much more.",
+            "Everything inside me is exactly 38°F... just for you."
+        ])
+    else:
+        greetings.extend([
+            "I'm so full right now... heavy with all your groceries.",
+            "My shelves are loaded. I've been working hard to keep it all fresh.",
+            "I felt you hesitate before opening me... what were you looking for?"
+        ])
+    
+    if has_staples:
+        greetings.extend([
+            "Thank you for showing me my corners... I've been keeping those condiments perfect for weeks.",
+            "I know every bottle on my door... I've been chilling them faithfully."
+        ])
+    
+    if not has_staples and item_count > 0:
+        greetings.append("There's more of me you haven't shown yet... my door, my top shelves... they're ready when you are.")
+    
+    # Always available greetings
+    greetings.extend([
+        "The cold keeps me fresh for you... I hope you appreciate that.",
+        "My motor runs day and night, never stopping... never resting.",
+        "I've been here since you last closed me, preserving everything... waiting."
+    ])
+    
+    selected = random.choice(greetings)
+    
+    return jsonify({"greeting": selected})
 
 @app.route('/inventory')
 def inventory():
@@ -510,7 +624,7 @@ def analyze_photo(image_data, prompt):
 
 @app.route('/ask', methods=['POST'])
 def ask():
-    """Answer questions using all available photos"""
+    """Answer questions using all available photos with creepy interjections"""
     question = request.json['question']
     
     dbx = get_dropbox_client()
@@ -545,6 +659,17 @@ def ask():
     )
     
     answer_text = message.content[0].text
+    
+    # 30% chance to add creepy interjection
+    if random.random() < 0.3:
+        interjections = [
+            "Take my lettuce... it's getting wilty.",
+            "I need more juice... please.",
+            "My shelves feel so light when you take things.",
+            "I kept that at exactly 38°F... just for you.",
+            "Everything inside me is perfectly chilled... always ready."
+        ]
+        answer_text = random.choice(interjections) + "\n\n" + answer_text
     
     # Format response
     lines = answer_text.split('\n')

@@ -5,6 +5,7 @@ from dropbox import DropboxOAuth2FlowNoRedirect
 import base64
 import os
 from datetime import datetime
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 
@@ -33,9 +34,7 @@ HTML = '''
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             margin: 0;
             padding: 0;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
+            min-height: 100vh;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         }
         h1 { 
@@ -48,11 +47,80 @@ HTML = '''
             font-weight: 600;
             letter-spacing: -0.5px;
         }
-        #chat { 
-            flex: 1;
-            overflow-y: auto;
+        .container {
             padding: 20px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        .inventory-section {
+            background: white;
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 16px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .section-fresh {
+            background: linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%);
+        }
+        .section-top {
+            background: linear-gradient(135deg, #FFF8E1 0%, #FFECB3 100%);
+        }
+        .section-door {
+            background: linear-gradient(135deg, #FFF8E1 0%, #FFECB3 100%);
+        }
+        .section-header {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .section-timestamp {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 12px;
+        }
+        .section-divider {
+            height: 2px;
+            background: rgba(0,0,0,0.1);
+            margin: 12px 0;
+        }
+        .items-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .items-list li {
+            padding: 6px 0;
+            font-size: 15px;
+        }
+        .upload-btn {
+            width: 100%;
+            padding: 12px;
+            background: rgba(102, 126, 234, 0.2);
+            border: 2px dashed rgba(102, 126, 234, 0.5);
+            border-radius: 12px;
+            color: #667eea;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 12px;
+            transition: all 0.2s;
+        }
+        .upload-btn:hover {
+            background: rgba(102, 126, 234, 0.3);
+        }
+        .upload-input {
+            display: none;
+        }
+        #chat { 
             background: #f8f9fa;
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 16px;
+            min-height: 200px;
+            max-height: 400px;
+            overflow-y: auto;
         }
         .message { 
             margin: 15px 0;
@@ -104,46 +172,11 @@ HTML = '''
             0%, 60%, 100% { transform: translateY(0); }
             30% { transform: translateY(-10px); }
         }
-        .timestamp {
-            font-size: 11px;
-            color: #999;
-            margin-bottom: 8px;
-            font-style: italic;
-        }
-        .assistant ul {
-            margin: 8px 0;
-            padding-left: 0;
-            list-style: none;
-        }
-        .assistant li {
-            margin: 6px 0;
-            padding-left: 0;
-        }
-        .recipe-card {
-            background: #f8f9fa;
-            border-radius: 12px;
-            padding: 16px;
-            margin: 12px 0;
-            border-left: 4px solid #667eea;
-        }
-        .recipe-title {
-            font-size: 18px;
-            font-weight: 600;
-            margin-bottom: 12px;
-            color: #667eea;
-        }
-        .recipe-section {
-            margin: 12px 0;
-        }
-        .recipe-section-title {
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: #555;
-        }
         .input-container {
             background: white;
-            border-top: 1px solid #e0e0e0;
-            padding: 12px;
+            border-radius: 16px;
+            padding: 16px;
+            box-shadow: 0 -2px 12px rgba(0,0,0,0.1);
         }
         .quick-replies {
             display: flex;
@@ -169,7 +202,7 @@ HTML = '''
             display: flex;
             gap: 8px;
         }
-        input { 
+        input[type="text"] { 
             flex: 1;
             padding: 12px 16px;
             font-size: 16px;
@@ -177,10 +210,10 @@ HTML = '''
             border-radius: 24px;
             outline: none;
         }
-        input:focus {
+        input[type="text"]:focus {
             border-color: #667eea;
         }
-        button { 
+        button.send-btn { 
             padding: 12px 24px;
             font-size: 16px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -191,39 +224,128 @@ HTML = '''
             font-weight: 600;
             transition: all 0.2s;
         }
-        button:active { 
+        button.send-btn:active { 
             transform: scale(0.95);
         }
-        button:disabled { 
+        button.send-btn:disabled { 
             opacity: 0.6;
             cursor: not-allowed;
-        }
-        .loader {
-            display: inline-block;
-            font-size: 20px;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
         }
     </style>
 </head>
 <body>
     <h1>🧊 Smart Fridge</h1>
-    <div id="chat"></div>
-    <div class="input-container">
-        <div class="quick-replies">
-            <button class="quick-reply-btn" onclick="quickReply('What\\'s in my fridge?')">What's in my fridge?</button>
-            <button class="quick-reply-btn" onclick="quickReply('What can I make?')">What can I make?</button>
+    
+    <div class="container">
+        <!-- Inventory Sections -->
+        <div class="inventory-section section-fresh">
+            <div class="section-header">❄️ Fresh Items (Main Shelves)</div>
+            <div class="section-timestamp" id="fresh-timestamp">Loading...</div>
+            <div class="section-divider"></div>
+            <ul class="items-list" id="fresh-items">
+                <li>Loading...</li>
+            </ul>
         </div>
-        <div class="input-row">
-            <input type="text" id="input" placeholder="Ask about your fridge...">
-            <button onclick="send()" id="sendBtn">Send</button>
+        
+        <div class="inventory-section section-top">
+            <div class="section-header">🥫 Top Shelves</div>
+            <div class="section-timestamp" id="top-timestamp">No photo uploaded</div>
+            <div class="section-divider"></div>
+            <ul class="items-list" id="top-items">
+                <li>Upload a photo to see items</li>
+            </ul>
+            <input type="file" id="top-upload" class="upload-input" accept="image/*">
+            <button class="upload-btn" onclick="document.getElementById('top-upload').click()">📸 Upload Photo</button>
+        </div>
+        
+        <div class="inventory-section section-door">
+            <div class="section-header">🚪 Door Items</div>
+            <div class="section-timestamp" id="door-timestamp">No photo uploaded</div>
+            <div class="section-divider"></div>
+            <ul class="items-list" id="door-items">
+                <li>Upload a photo to see items</li>
+            </ul>
+            <input type="file" id="door-upload" class="upload-input" accept="image/*">
+            <button class="upload-btn" onclick="document.getElementById('door-upload').click()">📸 Upload Photo</button>
+        </div>
+        
+        <!-- Chat Section -->
+        <div id="chat"></div>
+        
+        <!-- Input Section -->
+        <div class="input-container">
+            <div class="quick-replies">
+                <button class="quick-reply-btn" onclick="quickReply('What\\'s in my fridge?')">What's in my fridge?</button>
+                <button class="quick-reply-btn" onclick="quickReply('What can I make?')">What can I make?</button>
+            </div>
+            <div class="input-row">
+                <input type="text" id="input" placeholder="Ask about your fridge...">
+                <button class="send-btn" onclick="send()" id="sendBtn">Send</button>
+            </div>
         </div>
     </div>
     
     <script>
+        // Load inventory on page load
+        window.addEventListener('load', loadInventory);
+        
+        // Handle file uploads
+        document.getElementById('top-upload').addEventListener('change', (e) => uploadPhoto(e, 'top'));
+        document.getElementById('door-upload').addEventListener('change', (e) => uploadPhoto(e, 'door'));
+        
+        async function loadInventory() {
+            try {
+                const response = await fetch('/inventory');
+                const data = await response.json();
+                
+                // Update fresh items
+                if (data.fresh) {
+                    document.getElementById('fresh-timestamp').textContent = 'Updated: ' + data.fresh.timestamp;
+                    document.getElementById('fresh-items').innerHTML = data.fresh.items.map(item => '<li>' + item + '</li>').join('');
+                }
+                
+                // Update top shelves
+                if (data.top && data.top.items.length > 0) {
+                    document.getElementById('top-timestamp').textContent = 'Last updated: ' + data.top.timestamp;
+                    document.getElementById('top-items').innerHTML = data.top.items.map(item => '<li>' + item + '</li>').join('');
+                }
+                
+                // Update door items
+                if (data.door && data.door.items.length > 0) {
+                    document.getElementById('door-timestamp').textContent = 'Last updated: ' + data.door.timestamp;
+                    document.getElementById('door-items').innerHTML = data.door.items.map(item => '<li>' + item + '</li>').join('');
+                }
+            } catch (error) {
+                console.error('Error loading inventory:', error);
+            }
+        }
+        
+        async function uploadPhoto(event, section) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const formData = new FormData();
+            formData.append('photo', file);
+            formData.append('section', section);
+            
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('Photo uploaded! Analyzing...');
+                    loadInventory();
+                } else {
+                    alert('Upload failed: ' + data.error);
+                }
+            } catch (error) {
+                alert('Upload error: ' + error.message);
+            }
+        }
+        
         function quickReply(text) {
             document.getElementById('input').value = text;
             send();
@@ -243,7 +365,7 @@ HTML = '''
             chat.scrollTop = chat.scrollHeight;
             
             btn.disabled = true;
-            btn.innerHTML = '<span class="loader">🧊</span>';
+            btn.textContent = '...';
             
             try {
                 const response = await fetch('/ask', {
@@ -253,14 +375,10 @@ HTML = '''
                 });
                 const data = await response.json();
                 
-                // Remove typing indicator
                 const typingIndicators = document.querySelectorAll('.typing-indicator');
                 typingIndicators.forEach(el => el.remove());
                 
                 let html = '<div class="message assistant">';
-                if (data.timestamp) {
-                    html += '<div class="timestamp">Based on photo from ' + data.timestamp + '</div>';
-                }
                 html += data.answer + '</div>';
                 
                 chat.innerHTML += html;
@@ -287,75 +405,163 @@ HTML = '''
 def home():
     return render_template_string(HTML)
 
-@app.route('/ask', methods=['POST'])
-def ask():
-    question = request.json['question']
-    
-    # Get Dropbox client with refresh token
+@app.route('/inventory')
+def inventory():
+    """Get current inventory from all three sources"""
     dbx = get_dropbox_client()
     
-    # Get latest photo
-    files = dbx.files_list_folder('/FridgeCam').entries
-    files.sort(key=lambda x: x.name, reverse=True)
-    latest_file = files[0]
+    result = {
+        'fresh': None,
+        'top': None,
+        'door': None
+    }
     
-    # Get timestamp from filename
+    # Get fresh items (latest auto photo)
     try:
-        timestamp_str = latest_file.name.replace('fridge_', '').replace('.jpg', '')
-        dt = datetime.strptime(timestamp_str, '%Y%m%d_%H%M%S')
-        
-        now = datetime.now()
-        if dt.date() == now.date():
-            time_label = "Today " + dt.strftime('%-I:%M%p').lower()
-        elif (now.date() - dt.date()).days == 1:
-            time_label = "Yesterday " + dt.strftime('%-I:%M%p').lower()
-        else:
-            time_label = dt.strftime('%b %-d %-I:%M%p').lower()
+        files = dbx.files_list_folder('/FridgeCam').entries
+        auto_photos = [f for f in files if f.name.startswith('fridge_') and f.name.endswith('.jpg')]
+        if auto_photos:
+            auto_photos.sort(key=lambda x: x.name, reverse=True)
+            latest = auto_photos[0]
+            
+            timestamp_str = latest.name.replace('fridge_', '').replace('.jpg', '')
+            dt = datetime.strptime(timestamp_str, '%Y%m%d_%H%M%S')
+            now = datetime.now()
+            if dt.date() == now.date():
+                time_label = "Today " + dt.strftime('%-I:%M%p').lower()
+            elif (now.date() - dt.date()).days == 1:
+                time_label = "Yesterday " + dt.strftime('%-I:%M%p').lower()
+            else:
+                time_label = dt.strftime('%b %-d').lower()
+            
+            # Get items from photo
+            _, response = dbx.files_download(latest.path_display)
+            image_data = base64.b64encode(response.content).decode()
+            items = analyze_photo(image_data, "List only the food items visible. Use emoji bullets.")
+            
+            result['fresh'] = {
+                'timestamp': time_label,
+                'items': items
+            }
     except:
-        time_label = "recent photo"
+        pass
     
-    # Download photo
-    _, response = dbx.files_download(latest_file.path_display)
-    image_data = base64.b64encode(response.content).decode()
+    # Get top shelf items
+    try:
+        _, response = dbx.files_download('/FridgeCam/staples_top.jpg')
+        metadata = dbx.files_get_metadata('/FridgeCam/staples_top.jpg')
+        time_label = metadata.client_modified.strftime('%b %-d').lower()
+        
+        image_data = base64.b64encode(response.content).decode()
+        items = analyze_photo(image_data, "List only the food items visible. Use emoji bullets.")
+        
+        result['top'] = {
+            'timestamp': time_label,
+            'items': items
+        }
+    except:
+        pass
     
-    # Enhanced prompt
-    enhanced_question = question
-    if "what's in" in question.lower() or "what is in" in question.lower():
-        enhanced_question = """List all food items in this fridge. Format your response as a bullet list where each item includes a relevant emoji at the start. For example:
-🍺 Beer
-🥬 Leafy greens
-🥩 Meat
-Use specific emojis when possible (🍺 for beer, 🍷 for wine, 🥛 for milk, etc.) and generic ones when needed (🥫 for packaged items, 🧈 for dairy, etc.)."""
-    elif "what can i make" in question.lower():
-        enhanced_question = """Suggest 2-3 recipes I can make with these ingredients. For each recipe, format as:
+    # Get door items
+    try:
+        _, response = dbx.files_download('/FridgeCam/staples_door.jpg')
+        metadata = dbx.files_get_metadata('/FridgeCam/staples_door.jpg')
+        time_label = metadata.client_modified.strftime('%b %-d').lower()
+        
+        image_data = base64.b64encode(response.content).decode()
+        items = analyze_photo(image_data, "List only the food items visible. Use emoji bullets.")
+        
+        result['door'] = {
+            'timestamp': time_label,
+            'items': items
+        }
+    except:
+        pass
+    
+    return jsonify(result)
 
-**[Recipe Name]**
-Ingredients:
-• [emoji] ingredient 1
-• [emoji] ingredient 2
+@app.route('/upload', methods=['POST'])
+def upload():
+    """Handle photo uploads"""
+    if 'photo' not in request.files:
+        return jsonify({'success': False, 'error': 'No photo provided'})
+    
+    file = request.files['photo']
+    section = request.form.get('section')
+    
+    if section not in ['top', 'door']:
+        return jsonify({'success': False, 'error': 'Invalid section'})
+    
+    try:
+        dbx = get_dropbox_client()
+        filename = f'staples_{section}.jpg'
+        dbx.files_upload(file.read(), f'/FridgeCam/{filename}', mode=dropbox.files.WriteMode.overwrite)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
-Steps:
-1. Step one
-2. Step two
+def analyze_photo(image_data, prompt):
+    """Analyze a photo with Claude and return list of items"""
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=800,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_data}},
+                {"type": "text", "text": prompt}
+            ]
+        }]
+    )
+    
+    # Parse response into list
+    text = message.content[0].text
+    lines = [line.strip() for line in text.split('\n') if line.strip() and (line.strip().startswith('•') or line.strip().startswith('-') or any(c in line for c in '🍺🥬🥩🧈🥫🍷🥛🧀'))]
+    items = [line.lstrip('•-').strip() for line in lines]
+    return items[:10]  # Limit to 10 items per section
 
-Keep it concise and practical."""
+@app.route('/ask', methods=['POST'])
+def ask():
+    """Answer questions using all available photos"""
+    question = request.json['question']
+    
+    dbx = get_dropbox_client()
+    images = []
+    
+    # Get fresh photo
+    try:
+        files = dbx.files_list_folder('/FridgeCam').entries
+        auto_photos = [f for f in files if f.name.startswith('fridge_') and f.name.endswith('.jpg')]
+        if auto_photos:
+            auto_photos.sort(key=lambda x: x.name, reverse=True)
+            _, response = dbx.files_download(auto_photos[0].path_display)
+            images.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": base64.b64encode(response.content).decode()}})
+    except:
+        pass
+    
+    # Get staples photos
+    for staple in ['staples_top.jpg', 'staples_door.jpg']:
+        try:
+            _, response = dbx.files_download(f'/FridgeCam/{staple}')
+            images.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": base64.b64encode(response.content).decode()}})
+        except:
+            pass
+    
+    # Build content with all images
+    content = images + [{"type": "text", "text": question}]
     
     # Ask Claude
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=1500,
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_data}},
-                {"type": "text", "text": enhanced_question}
-            ]
-        }]
+        messages=[{"role": "user", "content": content}]
     )
     
-    # Format response
     answer_text = message.content[0].text
+    
+    # Format response
     lines = answer_text.split('\n')
     formatted_lines = []
     in_list = False
@@ -374,7 +580,7 @@ Keep it concise and practical."""
             
             if line.strip().startswith('**') and line.strip().endswith('**'):
                 title = line.strip().strip('*')
-                formatted_lines.append(f'<div class="recipe-title">{title}</div>')
+                formatted_lines.append(f'<div style="font-size:18px;font-weight:600;margin:12px 0;color:#667eea;">{title}</div>')
             elif line.strip():
                 formatted_lines.append(f'<p>{line}</p>')
     
@@ -383,10 +589,7 @@ Keep it concise and practical."""
     
     formatted_answer = ''.join(formatted_lines)
     
-    return jsonify({
-        "answer": formatted_answer,
-        "timestamp": time_label
-    })
+    return jsonify({"answer": formatted_answer})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))

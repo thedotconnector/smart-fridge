@@ -5,7 +5,6 @@ from dropbox import DropboxOAuth2FlowNoRedirect
 import base64
 import os
 from datetime import datetime
-from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 
@@ -34,93 +33,94 @@ HTML = '''
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             margin: 0;
             padding: 0;
-            min-height: 100vh;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        header { 
+            padding: 60px 20px 16px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         h1 { 
             margin: 0;
-            padding: 60px 20px 20px 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            text-align: center;
             font-size: 28px;
             font-weight: 600;
             letter-spacing: -0.5px;
         }
-        .container {
-            padding: 20px;
-            max-width: 600px;
-            margin: 0 auto;
+        .inventory-toggle {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .inventory-toggle:active {
+            background: rgba(255,255,255,0.3);
+        }
+        .inventory-drawer {
+            background: white;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+        }
+        .inventory-drawer.open {
+            max-height: 600px;
+            overflow-y: auto;
         }
         .inventory-section {
-            background: white;
-            border-radius: 16px;
-            padding: 20px;
-            margin-bottom: 16px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        }
-        .section-fresh {
-            background: linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%);
-        }
-        .section-top {
-            background: linear-gradient(135deg, #FFF8E1 0%, #FFECB3 100%);
-        }
-        .section-door {
-            background: linear-gradient(135deg, #FFF8E1 0%, #FFECB3 100%);
+            padding: 16px 20px;
+            border-bottom: 1px solid #f0f0f0;
         }
         .section-header {
-            font-size: 20px;
+            font-size: 16px;
             font-weight: 600;
-            margin-bottom: 8px;
+            margin-bottom: 4px;
             display: flex;
             align-items: center;
             gap: 8px;
         }
         .section-timestamp {
-            font-size: 12px;
-            color: #666;
-            margin-bottom: 12px;
-        }
-        .section-divider {
-            height: 2px;
-            background: rgba(0,0,0,0.1);
-            margin: 12px 0;
+            font-size: 11px;
+            color: #999;
+            margin-bottom: 8px;
         }
         .items-list {
             list-style: none;
             padding: 0;
-            margin: 0;
+            margin: 8px 0;
+            font-size: 14px;
         }
         .items-list li {
-            padding: 6px 0;
-            font-size: 15px;
+            padding: 4px 0;
         }
         .upload-btn {
             width: 100%;
-            padding: 12px;
-            background: rgba(102, 126, 234, 0.2);
-            border: 2px dashed rgba(102, 126, 234, 0.5);
-            border-radius: 12px;
+            padding: 10px;
+            background: rgba(102, 126, 234, 0.1);
+            border: 1px solid rgba(102, 126, 234, 0.3);
+            border-radius: 8px;
             color: #667eea;
             font-weight: 600;
+            font-size: 13px;
             cursor: pointer;
-            margin-top: 12px;
-            transition: all 0.2s;
-        }
-        .upload-btn:hover {
-            background: rgba(102, 126, 234, 0.3);
+            margin-top: 8px;
         }
         .upload-input {
             display: none;
         }
         #chat { 
-            background: #f8f9fa;
-            border-radius: 16px;
-            padding: 20px;
-            margin-bottom: 16px;
-            min-height: 200px;
-            max-height: 400px;
+            flex: 1;
             overflow-y: auto;
+            padding: 20px;
+            background: #f8f9fa;
         }
         .message { 
             margin: 15px 0;
@@ -145,6 +145,15 @@ HTML = '''
             box-shadow: 0 2px 8px rgba(0,0,0,0.08);
             color: #333;
         }
+        .assistant ul {
+            margin: 8px 0;
+            padding-left: 0;
+            list-style: none;
+        }
+        .assistant li {
+            margin: 6px 0;
+            padding-left: 0;
+        }
         .typing-indicator {
             display: flex;
             align-items: center;
@@ -162,21 +171,16 @@ HTML = '''
             background: #999;
             animation: bounce 1.4s infinite;
         }
-        .typing-indicator span:nth-child(2) {
-            animation-delay: 0.2s;
-        }
-        .typing-indicator span:nth-child(3) {
-            animation-delay: 0.4s;
-        }
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
         @keyframes bounce {
             0%, 60%, 100% { transform: translateY(0); }
             30% { transform: translateY(-10px); }
         }
         .input-container {
             background: white;
-            border-radius: 16px;
-            padding: 16px;
-            box-shadow: 0 -2px 12px rgba(0,0,0,0.1);
+            border-top: 1px solid #ddd;
+            padding: 12px;
         }
         .quick-replies {
             display: flex;
@@ -192,7 +196,6 @@ HTML = '''
             font-size: 14px;
             white-space: nowrap;
             cursor: pointer;
-            transition: all 0.2s;
         }
         .quick-reply-btn:active {
             background: #e0e0e0;
@@ -222,97 +225,84 @@ HTML = '''
             border-radius: 24px;
             cursor: pointer;
             font-weight: 600;
-            transition: all 0.2s;
         }
         button.send-btn:active { 
             transform: scale(0.95);
         }
         button.send-btn:disabled { 
             opacity: 0.6;
-            cursor: not-allowed;
         }
     </style>
 </head>
 <body>
-    <h1>🧊 Smart Fridge</h1>
+    <header>
+        <h1>🧊 Smart Fridge</h1>
+        <button class="inventory-toggle" onclick="toggleInventory()">📦 Inventory</button>
+    </header>
     
-    <div class="container">
-        <!-- Inventory Sections -->
-        <div class="inventory-section section-fresh">
-            <div class="section-header">❄️ Fresh Items (Main Shelves)</div>
+    <div class="inventory-drawer" id="inventoryDrawer">
+        <div class="inventory-section">
+            <div class="section-header">❄️ Fresh Items</div>
             <div class="section-timestamp" id="fresh-timestamp">Loading...</div>
-            <div class="section-divider"></div>
-            <ul class="items-list" id="fresh-items">
-                <li>Loading...</li>
-            </ul>
+            <ul class="items-list" id="fresh-items"><li>Loading...</li></ul>
         </div>
         
-        <div class="inventory-section section-top">
+        <div class="inventory-section">
             <div class="section-header">🥫 Top Shelves</div>
-            <div class="section-timestamp" id="top-timestamp">No photo uploaded</div>
-            <div class="section-divider"></div>
-            <ul class="items-list" id="top-items">
-                <li>Upload a photo to see items</li>
-            </ul>
+            <div class="section-timestamp" id="top-timestamp">No photo</div>
+            <ul class="items-list" id="top-items"><li>Upload a photo to see items</li></ul>
             <input type="file" id="top-upload" class="upload-input" accept="image/*">
             <button class="upload-btn" onclick="document.getElementById('top-upload').click()">📸 Upload Photo</button>
         </div>
         
-        <div class="inventory-section section-door">
+        <div class="inventory-section">
             <div class="section-header">🚪 Door Items</div>
-            <div class="section-timestamp" id="door-timestamp">No photo uploaded</div>
-            <div class="section-divider"></div>
-            <ul class="items-list" id="door-items">
-                <li>Upload a photo to see items</li>
-            </ul>
+            <div class="section-timestamp" id="door-timestamp">No photo</div>
+            <ul class="items-list" id="door-items"><li>Upload a photo to see items</li></ul>
             <input type="file" id="door-upload" class="upload-input" accept="image/*">
             <button class="upload-btn" onclick="document.getElementById('door-upload').click()">📸 Upload Photo</button>
         </div>
-        
-        <!-- Chat Section -->
-        <div id="chat"></div>
-        
-        <!-- Input Section -->
-        <div class="input-container">
-            <div class="quick-replies">
-                <button class="quick-reply-btn" onclick="quickReply('What\\'s in my fridge?')">What's in my fridge?</button>
-                <button class="quick-reply-btn" onclick="quickReply('What can I make?')">What can I make?</button>
-            </div>
-            <div class="input-row">
-                <input type="text" id="input" placeholder="Ask about your fridge...">
-                <button class="send-btn" onclick="send()" id="sendBtn">Send</button>
-            </div>
+    </div>
+    
+    <div id="chat"></div>
+    
+    <div class="input-container">
+        <div class="quick-replies">
+            <button class="quick-reply-btn" onclick="quickReply('What\\'s in my fridge?')">What's in my fridge?</button>
+            <button class="quick-reply-btn" onclick="quickReply('What can I make?')">What can I make?</button>
+        </div>
+        <div class="input-row">
+            <input type="text" id="input" placeholder="Ask about your fridge...">
+            <button class="send-btn" onclick="send()" id="sendBtn">Send</button>
         </div>
     </div>
     
     <script>
-        // Load inventory on page load
         window.addEventListener('load', loadInventory);
-        
-        // Handle file uploads
         document.getElementById('top-upload').addEventListener('change', (e) => uploadPhoto(e, 'top'));
         document.getElementById('door-upload').addEventListener('change', (e) => uploadPhoto(e, 'door'));
+        
+        function toggleInventory() {
+            document.getElementById('inventoryDrawer').classList.toggle('open');
+        }
         
         async function loadInventory() {
             try {
                 const response = await fetch('/inventory');
                 const data = await response.json();
                 
-                // Update fresh items
                 if (data.fresh) {
-                    document.getElementById('fresh-timestamp').textContent = 'Updated: ' + data.fresh.timestamp;
+                    document.getElementById('fresh-timestamp').textContent = data.fresh.timestamp;
                     document.getElementById('fresh-items').innerHTML = data.fresh.items.map(item => '<li>' + item + '</li>').join('');
                 }
                 
-                // Update top shelves
                 if (data.top && data.top.items.length > 0) {
-                    document.getElementById('top-timestamp').textContent = 'Last updated: ' + data.top.timestamp;
+                    document.getElementById('top-timestamp').textContent = data.top.timestamp;
                     document.getElementById('top-items').innerHTML = data.top.items.map(item => '<li>' + item + '</li>').join('');
                 }
                 
-                // Update door items
                 if (data.door && data.door.items.length > 0) {
-                    document.getElementById('door-timestamp').textContent = 'Last updated: ' + data.door.timestamp;
+                    document.getElementById('door-timestamp').textContent = data.door.timestamp;
                     document.getElementById('door-items').innerHTML = data.door.items.map(item => '<li>' + item + '</li>').join('');
                 }
             } catch (error) {
@@ -321,7 +311,7 @@ HTML = '''
         }
         
         async function uploadPhoto(event, section) {
-            const file = event.target.files[0];
+            const file = event.files[0];
             if (!file) return;
             
             const formData = new FormData();
@@ -378,10 +368,7 @@ HTML = '''
                 const typingIndicators = document.querySelectorAll('.typing-indicator');
                 typingIndicators.forEach(el => el.remove());
                 
-                let html = '<div class="message assistant">';
-                html += data.answer + '</div>';
-                
-                chat.innerHTML += html;
+                chat.innerHTML += '<div class="message assistant">' + data.answer + '</div>';
             } catch (error) {
                 const typingIndicators = document.querySelectorAll('.typing-indicator');
                 typingIndicators.forEach(el => el.remove());
@@ -401,6 +388,8 @@ HTML = '''
 </html>
 '''
 
+# ... (keep all the backend routes from previous version: /inventory, /upload, /ask, analyze_photo function)
+
 @app.route('/')
 def home():
     return render_template_string(HTML)
@@ -416,7 +405,7 @@ def inventory():
         'door': None
     }
     
-    # Get fresh items (latest auto photo)
+    # Get fresh items
     try:
         files = dbx.files_list_folder('/FridgeCam').entries
         auto_photos = [f for f in files if f.name.startswith('fridge_') and f.name.endswith('.jpg')]
@@ -434,7 +423,6 @@ def inventory():
             else:
                 time_label = dt.strftime('%b %-d').lower()
             
-            # Get items from photo
             _, response = dbx.files_download(latest.path_display)
             image_data = base64.b64encode(response.content).decode()
             items = analyze_photo(image_data, "List only the food items visible. Use emoji bullets.")
@@ -515,11 +503,10 @@ def analyze_photo(image_data, prompt):
         }]
     )
     
-    # Parse response into list
     text = message.content[0].text
     lines = [line.strip() for line in text.split('\n') if line.strip() and (line.strip().startswith('•') or line.strip().startswith('-') or any(c in line for c in '🍺🥬🥩🧈🥫🍷🥛🧀'))]
     items = [line.lstrip('•-').strip() for line in lines]
-    return items[:10]  # Limit to 10 items per section
+    return items[:10]
 
 @app.route('/ask', methods=['POST'])
 def ask():
@@ -548,10 +535,8 @@ def ask():
         except:
             pass
     
-    # Build content with all images
     content = images + [{"type": "text", "text": question}]
     
-    # Ask Claude
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     message = client.messages.create(
         model="claude-sonnet-4-20250514",

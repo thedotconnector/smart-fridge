@@ -399,7 +399,13 @@ HTML = '''
                 const typingIndicators = document.querySelectorAll('.typing-indicator');
                 typingIndicators.forEach(el => el.remove());
                 
-                chat.innerHTML += '<div class="message assistant">' + data.answer + '</div>';
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message assistant';
+                messageDiv.innerHTML = data.answer;
+                chat.appendChild(messageDiv);
+                
+                // Scroll to show top of new message
+                messageDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
             } catch (error) {
                 const typingIndicators = document.querySelectorAll('.typing-indicator');
                 typingIndicators.forEach(el => el.remove());
@@ -408,7 +414,6 @@ HTML = '''
             
             btn.disabled = false;
             btn.textContent = 'Send';
-            chat.scrollTop = chat.scrollHeight;
         }
         
         document.getElementById('input').addEventListener('keypress', function(e) {

@@ -1,14 +1,25 @@
 from flask import Flask, request, jsonify, render_template_string
 import anthropic
 import dropbox
+from dropbox import DropboxOAuth2FlowNoRedirect
 import base64
 import os
 from datetime import datetime
 
 app = Flask(__name__)
 
-DROPBOX_TOKEN = os.environ.get('DROPBOX_TOKEN')
+DROPBOX_REFRESH_TOKEN = os.environ.get('DROPBOX_REFRESH_TOKEN')
+DROPBOX_APP_KEY = os.environ.get('DROPBOX_APP_KEY')
+DROPBOX_APP_SECRET = os.environ.get('DROPBOX_APP_SECRET')
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY')
+
+def get_dropbox_client():
+    """Get Dropbox client with refresh token"""
+    return dropbox.Dropbox(
+        oauth2_refresh_token=DROPBOX_REFRESH_TOKEN,
+        app_key=DROPBOX_APP_KEY,
+        app_secret=DROPBOX_APP_SECRET
+    )
 
 HTML = '''
 <!DOCTYPE html>
@@ -65,6 +76,33 @@ HTML = '''
             background: white;
             box-shadow: 0 2px 8px rgba(0,0,0,0.08);
             color: #333;
+        }
+        .typing-indicator {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            color: #999;
+            font-size: 14px;
+            margin: 10px 0;
+            padding-left: 5px;
+        }
+        .typing-indicator span {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #999;
+            animation: bounce 1.4s infinite;
+        }
+        .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+        .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+        @keyframes bounce {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-10px); }
         }
         .timestamp {
             font-size: 11px;
@@ -200,6 +238,7 @@ HTML = '''
             if (!question) return;
             
             chat.innerHTML += '<div class="message user">' + question + '</div>';
+            chat.innerHTML += '<div class="typing-indicator">Thinking<span></span><span></span><span></span></div>';
             input.value = '';
             chat.scrollTop = chat.scrollHeight;
             
@@ -214,6 +253,10 @@ HTML = '''
                 });
                 const data = await response.json();
                 
+                // Remove typing indicator
+                const typingIndicators = document.querySelectorAll('.typing-indicator');
+                typingIndicators.forEach(el => el.remove());
+                
                 let html = '<div class="message assistant">';
                 if (data.timestamp) {
                     html += '<div class="timestamp">Based on photo from ' + data.timestamp + '</div>';
@@ -222,6 +265,8 @@ HTML = '''
                 
                 chat.innerHTML += html;
             } catch (error) {
+                const typingIndicators = document.querySelectorAll('.typing-indicator');
+                typingIndicators.forEach(el => el.remove());
                 chat.innerHTML += '<div class="message assistant">Error: ' + error.message + '</div>';
             }
             
@@ -246,18 +291,19 @@ def home():
 def ask():
     question = request.json['question']
     
-    # Get latest photo from Dropbox
-    dbx = dropbox.Dropbox(DROPBOX_TOKEN)
+    # Get Dropbox client with refresh token
+    dbx = get_dropbox_client()
+    
+    # Get latest photo
     files = dbx.files_list_folder('/FridgeCam').entries
     files.sort(key=lambda x: x.name, reverse=True)
     latest_file = files[0]
     
-    # Get timestamp from filename (format: fridge_YYYYMMDD_HHMMSS.jpg)
+    # Get timestamp from filename
     try:
         timestamp_str = latest_file.name.replace('fridge_', '').replace('.jpg', '')
         dt = datetime.strptime(timestamp_str, '%Y%m%d_%H%M%S')
         
-        # Format as "Today 3:15pm" or "Yesterday 3:15pm" or "Jan 5 3:15pm"
         now = datetime.now()
         if dt.date() == now.date():
             time_label = "Today " + dt.strftime('%-I:%M%p').lower()
@@ -272,7 +318,7 @@ def ask():
     _, response = dbx.files_download(latest_file.path_display)
     image_data = base64.b64encode(response.content).decode()
     
-    # Enhanced prompt for better formatting
+    # Enhanced prompt
     enhanced_question = question
     if "what's in" in question.lower() or "what is in" in question.lower():
         enhanced_question = """List all food items in this fridge. Format your response as a bullet list where each item includes a relevant emoji at the start. For example:
@@ -308,10 +354,8 @@ Keep it concise and practical."""
         }]
     )
     
-    # Convert markdown-style formatting to HTML
+    # Format response
     answer_text = message.content[0].text
-    
-    # Convert bullet points to HTML list
     lines = answer_text.split('\n')
     formatted_lines = []
     in_list = False
@@ -328,7 +372,6 @@ Keep it concise and practical."""
                 formatted_lines.append('</ul>')
                 in_list = False
             
-            # Format recipe titles
             if line.strip().startswith('**') and line.strip().endswith('**'):
                 title = line.strip().strip('*')
                 formatted_lines.append(f'<div class="recipe-title">{title}</div>')

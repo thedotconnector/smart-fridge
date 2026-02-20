@@ -4,8 +4,16 @@ import dropbox
 from dropbox import DropboxOAuth2FlowNoRedirect
 import base64
 import os
+import json
 from datetime import datetime
 import random
+
+from auth import require_auth, exchange_secret
+from inventory_cache import (
+    get_cached_inventory, rebuild_section, add_manual_item,
+    remove_item, get_suggestions, is_section_stale,
+)
+from food_mapping import resolve_food
 
 app = Flask(__name__)
 
@@ -712,6 +720,213 @@ def ask():
     formatted_answer = ''.join(formatted_lines)
     
     return jsonify({"answer": formatted_answer})
+
+
+# =============================================================================
+# API Routes (JSON, for iOS app)
+# =============================================================================
+
+def analyze_photo_structured(image_data):
+    """Analyze a photo with Claude and return structured JSON array of {name, quantity}."""
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=1000,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_data}},
+                {"type": "text", "text": (
+                    "List every food item visible in this fridge photo. "
+                    "Return ONLY a JSON array with objects like: "
+                    '[{"name": "milk", "quantity": 1}, {"name": "cheddar cheese", "quantity": 1}]. '
+                    "Use common grocery names. Estimate quantity where obvious (e.g. 6 eggs, 2 beers). "
+                    "Return ONLY the JSON array, no other text."
+                )}
+            ]
+        }]
+    )
+    text = message.content[0].text.strip()
+    # Strip markdown code fences if present
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return []
+
+
+@app.route('/api/auth/token', methods=['POST'])
+def api_auth_token():
+    """Exchange pre-shared secret for bearer token."""
+    data = request.get_json(silent=True) or {}
+    secret = data.get("secret", "")
+    token = exchange_secret(secret)
+    if token:
+        return jsonify({"token": token})
+    return jsonify({"error": "Invalid secret"}), 401
+
+
+@app.route('/api/greeting')
+@require_auth
+def api_greeting():
+    """Creepy fridge greeting (reuses existing logic)."""
+    response = greeting()
+    return response
+
+
+@app.route('/api/inventory')
+@require_auth
+def api_inventory():
+    """Structured inventory from cache."""
+    # Check if fresh section is stale — if so, try to rebuild from latest Dropbox photo
+    if is_section_stale("fresh"):
+        try:
+            dbx = get_dropbox_client()
+            files = dbx.files_list_folder('/FridgeCam').entries
+            auto_photos = [f for f in files if f.name.startswith('fridge_') and f.name.endswith('.jpg')]
+            if auto_photos:
+                auto_photos.sort(key=lambda x: x.name, reverse=True)
+                latest = auto_photos[0]
+                timestamp_str = latest.name.replace('fridge_', '').replace('.jpg', '')
+                _, response = dbx.files_download(latest.path_display)
+                image_data = base64.b64encode(response.content).decode()
+                items_raw = analyze_photo_structured(image_data)
+                rebuild_section("fresh", items_raw, photo_timestamp=timestamp_str)
+        except Exception:
+            pass
+
+    cached = get_cached_inventory()
+    return jsonify(cached)
+
+
+@app.route('/api/inventory/add', methods=['POST'])
+@require_auth
+def api_inventory_add():
+    """Add an item manually."""
+    data = request.get_json(silent=True) or {}
+    name = data.get("name", "").strip()
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+    shelf = data.get("shelf", "fresh")
+    quantity = data.get("quantity", 1)
+    item = add_manual_item(name, shelf, quantity)
+    return jsonify({"item": item})
+
+
+@app.route('/api/inventory/remove', methods=['POST'])
+@require_auth
+def api_inventory_remove():
+    """Remove an item by ID."""
+    data = request.get_json(silent=True) or {}
+    item_id = data.get("id", "")
+    if not item_id:
+        return jsonify({"error": "id is required"}), 400
+    removed = remove_item(item_id)
+    if removed:
+        return jsonify({"success": True})
+    return jsonify({"error": "Item not found"}), 404
+
+
+@app.route('/api/ask', methods=['POST'])
+@require_auth
+def api_ask():
+    """Chat Q&A — returns plain text (not HTML) + optional interjection."""
+    data = request.get_json(silent=True) or {}
+    question = data.get("question", "").strip()
+    if not question:
+        return jsonify({"error": "question is required"}), 400
+
+    dbx = get_dropbox_client()
+    images = []
+
+    try:
+        files = dbx.files_list_folder('/FridgeCam').entries
+        auto_photos = [f for f in files if f.name.startswith('fridge_') and f.name.endswith('.jpg')]
+        if auto_photos:
+            auto_photos.sort(key=lambda x: x.name, reverse=True)
+            _, resp = dbx.files_download(auto_photos[0].path_display)
+            images.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": base64.b64encode(resp.content).decode()}})
+    except Exception:
+        pass
+
+    for staple in ['staples_top.jpg', 'staples_door.jpg']:
+        try:
+            _, resp = dbx.files_download(f'/FridgeCam/{staple}')
+            images.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": base64.b64encode(resp.content).decode()}})
+        except Exception:
+            pass
+
+    content = images + [{"type": "text", "text": question}]
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    message = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=1500,
+        messages=[{"role": "user", "content": content}]
+    )
+
+    answer_text = message.content[0].text
+    interjection = None
+
+    if random.random() < 0.3:
+        interjections = [
+            "Take my lettuce... it's getting wilty.",
+            "I need more juice... please.",
+            "My shelves feel so light when you take things.",
+            "I kept that at exactly 38\u00b0F... just for you.",
+            "Everything inside me is perfectly chilled... always ready."
+        ]
+        interjection = random.choice(interjections)
+
+    return jsonify({
+        "answer": answer_text,
+        "interjection": interjection,
+    })
+
+
+@app.route('/api/upload', methods=['POST'])
+@require_auth
+def api_upload():
+    """Photo upload that triggers structured cache rebuild."""
+    if 'photo' not in request.files:
+        return jsonify({'error': 'No photo provided'}), 400
+
+    file = request.files['photo']
+    section = request.form.get('section', 'fresh')
+
+    if section not in ['fresh', 'top', 'door']:
+        return jsonify({'error': 'Invalid section'}), 400
+
+    try:
+        dbx = get_dropbox_client()
+        photo_bytes = file.read()
+
+        if section == 'fresh':
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f'fridge_{timestamp}.jpg'
+        else:
+            filename = f'staples_{section}.jpg'
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+        dbx.files_upload(photo_bytes, f'/FridgeCam/{filename}', mode=dropbox.files.WriteMode.overwrite)
+
+        # Analyze and rebuild cache
+        image_data = base64.b64encode(photo_bytes).decode()
+        items_raw = analyze_photo_structured(image_data)
+        rebuild_section(section, items_raw, photo_timestamp=timestamp)
+
+        return jsonify({'success': True, 'items_found': len(items_raw)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/suggestions')
+@require_auth
+def api_suggestions():
+    """Items seen previously but missing now."""
+    return jsonify({"suggestions": get_suggestions()})
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
